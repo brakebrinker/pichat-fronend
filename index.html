@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+
+    <title>PiChat</title>
+    <script src="/lib/socket.io/dist/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        .auth {
+            height: 500px;
+        }
+        .position-toast {
+            display: flex;
+            justify-content: flex-start;
+        }
+        .position-toast.own {
+            justify-content: flex-end;
+        }
+        .toast {
+            flex: 1;
+            margin-bottom: 10px;
+        }
+        .toast.own {
+            background-color: #dbeaec;
+        }
+        #room-messages {
+            max-height: 800px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="header" class="mt-3 mb-5">
+            <div class="row align-items-center justify-content-md-center">
+                <div class="col-md-8">
+                    <div class="clearfix">
+                        <button id="logout" type="button" class="btn btn-light float-right">Logout</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="login" class="section login">
+            <div class="row auth align-items-center justify-content-md-center">
+                <div class="col-md-auto">
+                    <h1 class="text-center">Authorization</h1>
+                    <form id="auth" action="">
+                        <div class="input-group mb-3 mt-3">
+                            <input type="text" class="form-control" name="nickname" id="nickname" placeholder="Your Nickname" aria-label="Your Nickname" aria-describedby="login-submit">
+                            <div class="input-group-append">
+                                <button type="submit" class="btn btn-outline-primary" id="login-submit">Login</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div id="rooms" class="section rooms">
+            <div class="row align-items-center justify-content-md-center">
+                <div class="col-md-6">
+                    <h1 class="text-center">Rooms</h1>
+                    <div id="list-rooms" class="input-group d-flex justify-content-center mb-3 mt-3"></div>
+                    <form id="new-room" action="">
+                        <div class="input-group mb-3 mt-3">
+                            <input type="text" class="form-control" name="name" id="name" placeholder="Room name" aria-label="Room name" aria-describedby="room-name-submit">
+                            <div class="input-group-append">
+                                <input type="hidden" name="creator" id="creator">
+                                <button type="submit" class="btn btn-outline-info" id="room-name-submit">Add New Room</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div id="single-room" class="section single-room">
+            <div class="row justify-content-md-center">
+                <div class="col-md-auto mb-3">
+                    <h1 id="room-name-header" class="text-center"></h1>
+                </div>
+            </div>
+            <div class="row align-items-center justify-content-md-center">
+                <div class="col-md-10 mt-3">
+                    <div class="row">
+                        <div class="clearfix mb-4">
+                            <button id="to-rooms" type="button" class="btn btn-outline-secondary float-left">< Go to rooms</button>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="row">
+                                <form id="search-message" action="" class="input-group mb-1">
+                                    <div class="input-group">
+                                        <input type="text" name="phrase" class="form-control" placeholder="Search by messages" aria-label="Search by messages" aria-describedby="basic-addon2">
+                                        <div class="input-group-append">
+                                            <button class="btn btn-outline-secondary" type="submit">Search</button>
+                                        </div>
+                                    </div>
+                                    <div id="search-dropdown" class="dropdown-menu"></div>
+                                </form>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12 border rounded">
+                                    <div id="room-messages" class="overflow-auto mt-3 mb-3" aria-live="polite" aria-atomic="true" style="position: relative; min-height: 200px;"></div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <form id="new-message" action="" class="input-group mb-3 mt-3">
+                                    <div class="input-group">
+<!--                                        <textarea class="form-control" name="text" id="text" cols="30" rows="3" placeholder="New message" aria-label="New message" aria-describedby="room-message-submit"></textarea>-->
+                                        <input type="text" class="form-control" name="text" id="text" placeholder="New message" aria-label="New message" aria-describedby="room-message-submit">
+                                        <div class="input-group-append">
+                                            <input type="hidden" name="creatorId" id="creatorId" value="">
+                                            <button type="submit" class="btn btn-outline-success" id="room-message-submit">Send</button>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <ul id="room-users" class="list-group"></ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        const backendApiUrl = 'http://localhost:3000/';
+        const socket = io(backendApiUrl);
+        axios.defaults.baseURL = backendApiUrl + 'api/';
+
+        const sections = {
+            login: 'login',
+            rooms: 'rooms',
+            singleRoom: 'single-room',
+        }
+
+        const messageDays = 37;
+
+        socket.on('connect', function() {
+            console.log('Connected');
+        });
+
+        socket.on('sendMessageToClient', function(message) {
+            renderLastMessage(message);
+        });
+
+        socket.on('userEnterToRoom', function(user) {
+            renderUserInRoom(user);
+        });
+
+        socket.on('userLeftRoom', function(user) {
+            removeUserFromUserRoomList(user.id);
+        });
+
+        socket.on('userLogout', function(user) {
+            removeUserFromUserRoomList(user.id);
+        });
+
+        socket.on('exception', function(data) {
+            console.log('event', data);
+        });
+
+        socket.on('disconnect', function() {
+            console.log('Disconnected');
+        });
+
+        const authForm = document.getElementById('auth');
+        const newRoomForm = document.getElementById('new-room');
+        const newMessageForm = document.getElementById('new-message');
+        const goToRoomsButton = document.getElementById('to-rooms');
+        const logoutButton = document.getElementById('logout');
+        const searchMessageForm = document.getElementById('search-message');
+
+        document.body.addEventListener('click', () => {
+            hideSearchDropdown();
+        }, true);
+
+        authForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+
+            const formData = new FormData(event.target);
+            const formProps = Object.fromEntries(formData);
+
+            login(formProps);
+        });
+
+        newRoomForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+
+            const formData = new FormData(event.target);
+            const formProps = Object.fromEntries(formData);
+
+            formProps.creator = localStorage.getItem('userNickname');
+
+            addNewRoom(formProps);
+        });
+
+        newMessageForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+
+            const formData = new FormData(event.target);
+            const formProps = Object.fromEntries(formData);
+
+            sendMessage(formProps.text);
+
+            event.target.reset();
+        });
+
+        goToRoomsButton.addEventListener('click', (event) => {
+            event.preventDefault();
+
+            exitRoom();
+
+            switchOnSection(sections.rooms);
+            renderRooms();
+        });
+
+        logoutButton.addEventListener('click', (event) => {
+            event.preventDefault();
+
+            logout();
+
+            switchOnSection(sections.login);
+        });
+
+        searchMessageForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+
+            const formData = new FormData(event.target);
+            const formProps = Object.fromEntries(formData);
+
+            searchMessages(formProps.phrase);
+
+            event.target.reset();
+        });
+
+        if (localStorage.getItem('userId')) {
+            switchOnSection(sections.rooms);
+            exitRoom();
+            renderRooms();
+        } else {
+            switchOnSection(sections.login);
+        }
+
+        function login(formData) {
+            axios.post('auth/login', formData)
+                .then((response) => {
+                    if (response.data.id) {
+                        localStorage.setItem('userId', response.data.id);
+                        localStorage.setItem('userNickname', response.data.nickname);
+                        renderRooms();
+                    }
+                })
+                .catch(function (error) {
+                    console.log(error);
+                });
+        }
+
+        function addNewRoom(formData) {
+            axios.post('room/create', formData)
+                .then(function (response) {
+                    if (response.data.id) {
+                        renderRooms();
+                    }
+                })
+                .catch(function (error) {
+                    console.log(error);
+                })
+        }
+
+        function renderRooms() {
+            const listRooms = document.getElementById('list-rooms');
+
+            if (!listRooms) {
+                return;
+            }
+
+            axios.get('room/rooms')
+                .then(function (response) {
+                    let rooms = '';
+
+                    response.data.forEach((room) => {
+                        rooms += generateRoomLinkTemplate(room);
+                    })
+
+                    listRooms.innerHTML = rooms;
+
+                    switchOnSection(sections.rooms);
+                })
+                .catch(function (error) {
+                    console.log(error);
+                })
+        }
+
+        function generateRoomLinkTemplate(room) {
+            return `<button type="button" class="room-entry btn btn-info m-1" data-roomid="${room.id}" onclick="goToRoom(this)">${room.name}</button>`;
+        }
+
+        function goToRoom(roomElement) {
+            axios.get(`room/id/${roomElement.dataset.roomid}`)
+                .then(function (response) {
+                    if (response.data.id) {
+                        localStorage.setItem('roomId', response.data.id);
+                        localStorage.setItem('roomName', response.data.name);
+
+                        switchOnSection(sections.singleRoom);
+                        setRoomNameHeader();
+                        getOnlineUsersInRoom(roomElement.dataset.roomid);
+                        emitUsersInRoom();
+                        getRoomMessages(roomElement.dataset.roomid);
+                    }
+                })
+                .catch(function (error) {
+                    console.log(error);
+                })
+        }
+
+        function getOnlineUsersInRoom(roomId) {
+            axios.get(`user/users/roomid/${roomId}`)
+                .then(function (response) {
+                    const usersInRoomListContainer = document.getElementById('room-users');
+
+                    usersInRoomListContainer.innerHTML = '';
+
+                    if (response.data.length) {
+                        response.data.forEach((user) => {
+                            renderUserInRoom(user);
+                        })
+                    }
+                })
+                .catch(function (error) {
+                    console.log(error);
+                })
+        }
+
+        function setRoomNameHeader() {
+            const roomHeader = document.getElementById('room-name-header');
+
+            if (!roomHeader) {
+                return;
+            }
+
+            roomHeader.innerText = `Room "${localStorage.getItem('roomName')}"`;
+        }
+
+        function exitRoom() {
+            const data = {
+                userId: localStorage.getItem('userId'),
+                roomId: localStorage.getItem('roomId'),
+            }
+
+            socket.emit('userExitRoom', data);
+
+            localStorage.removeItem('roomId');
+            localStorage.removeItem('roomName');
+        }
+
+        function emitUsersInRoom() {
+            const userData = {
+                userId: localStorage.getItem('userId'),
+                roomId: localStorage.getItem('roomId'),
+            }
+
+            socket.emit('addUserToRoom', userData);
+        }
+
+        function renderUserInRoom(user) {
+            if (!user) {
+                return;
+            }
+
+            const usersInRoomListContainer = document.getElementById('room-users');
+
+            if (!usersInRoomListContainer) {
+                return;
+            }
+
+            const userTemplate = generateRoomUserTemplate(user);
+
+            const userInRoomList = document.querySelectorAll(`[data-userid='${user.id}']`);
+
+            if (userInRoomList.length) {
+                return;
+            }
+
+            usersInRoomListContainer.innerHTML += userTemplate;
+        }
+
+        function removeUserFromUserRoomList(userId) {
+            const userItem = document.querySelectorAll(`[data-userid="${userId}"]`);
+
+            if (userItem.length) {
+                userItem[0].remove();
+            }
+        }
+
+        function generateRoomUserTemplate(user) {
+            return `<li class="list-group-item user-in-room" data-userid="${user.id}">${user.nickname}</li>`
+        }
+
+        function getRoomMessages(roomId) {
+            axios.get(`message/messages/roomid/${roomId}/${messageDays}`)
+                .then(function (response) {
+                    if (response.data.length) {
+                        renderLastMessages(response.data);
+                    }
+                })
+                .catch(function (error) {
+                    console.log(error);
+                })
+        }
+
+        function logout() {
+            const userData = {
+                id: localStorage.getItem('userId'),
+                isOnline: false,
+            }
+
+            socket.emit('logout', userData);
+
+            localStorage.removeItem('userId');
+            localStorage.removeItem('userNickname');
+            localStorage.removeItem('roomId');
+            localStorage.removeItem('roomName');
+        }
+
+        function renderLastMessages(messages) {
+            const roomMessagesContainer = document.getElementById('room-messages');
+            let lastMessages = '';
+
+            if (!roomMessagesContainer) {
+                return;
+            }
+
+            messages.forEach((message) => {
+                lastMessages += generateRoomMessageTemplate(message);
+            })
+
+            roomMessagesContainer.innerHTML = lastMessages;
+
+            scrollDownMessageContainer();
+        }
+
+        function renderLastMessage(message) {
+            const roomMessagesContainer = document.getElementById('room-messages');
+
+            if (!roomMessagesContainer) {
+                return;
+            }
+
+            const lastMessage = generateRoomMessageTemplate(message);
+
+            roomMessagesContainer.innerHTML = roomMessagesContainer.innerHTML + lastMessage;
+
+            scrollDownMessageContainer();
+        }
+
+        function generateRoomMessageTemplate(message) {
+            const isOwnMessage = message.creator.id === localStorage.getItem('userId');
+
+            return `<div class="position-toast ${isOwnMessage ? 'own' : ''}" style="position: relative; top: 0; right: 0;">
+                        <div class="toast show ${isOwnMessage ? 'own' : ''}" role="alert" aria-live="assertive" aria-atomic="true">
+                            <div class="toast-header">
+                                <strong class="mr-auto">${message.creator.nickname}</strong>
+                                <small class="text-muted">${message.createdAt}</small>
+                            </div>
+                            <div class="toast-body">${message.text}</div>
+                        </div>
+                    </div>`;
+        }
+
+        function sendMessage(message) {
+            const messageData = {
+                text: message,
+                roomId: localStorage.getItem('roomId'),
+                creatorId: localStorage.getItem('userId'),
+            }
+
+            emitMessagesInRoom(messageData);
+        }
+
+        function searchMessages(searchPhrase) {
+            axios.get(`message/messages/roomid/${localStorage.getItem('roomId')}/search/${searchPhrase}`)
+                .then(function (response) {
+                    if (response.data.length) {
+                        renderSearchMessages(response.data);
+                    }
+                })
+                .catch(function (error) {
+                    console.log(error);
+                })
+        }
+
+        function renderSearchMessages(messages) {
+            const searchResultDropdown = document.getElementById('search-dropdown');
+            let searchMessageElements = '';
+
+            if (!searchResultDropdown) {
+                return;
+            }
+
+            messages.forEach((message) => {
+                searchMessageElements += generateSearchMessageTemplate(message);
+            })
+
+            searchResultDropdown.innerHTML = searchMessageElements;
+            searchResultDropdown.classList.add('show');
+        }
+
+        function generateSearchMessageTemplate(message) {
+            return `<button class="dropdown-item" type="button"><strong>${message.creator.nickname}</strong>: ${message.text} (${message.createdAt})</button>`;
+        }
+
+        function hideSearchDropdown() {
+            const searchResultDropdown = document.getElementById('search-dropdown');
+
+            if (!searchResultDropdown) {
+                return;
+            }
+
+            if (searchResultDropdown.classList.contains('show')) {
+                searchResultDropdown.classList.remove('show');
+            }
+
+        }
+
+        function emitMessagesInRoom(messageData) {
+            socket.emit('sendMessage', messageData);
+        }
+
+        function scrollDownMessageContainer() {
+            const roomMessagesContainer = document.getElementById('room-messages');
+            roomMessagesContainer.scrollTo(0, roomMessagesContainer.scrollHeight);
+        }
+
+        function switchOnSection(section) {
+            const currentSection = document.getElementById(section);
+            const allowedSections = document.getElementsByClassName('section');
+
+            if (!currentSection) {
+                return;
+            }
+
+            if (allowedSections.length === 0) {
+                return;
+            }
+
+            for (const allowedSection of allowedSections) {
+                allowedSection.style.display = 'none';
+            }
+
+            currentSection.style.display = 'initial';
+        }
+    </script>
+</body>
+</html>
